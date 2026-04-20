@@ -1,6 +1,6 @@
 param(
     [string]$OutputDir = "dist/cli",
-    [string]$Name = "llm_toolkit_cli",
+    [string]$Name = "toolkit",
     [string[]]$Targets = @(
         "windows/amd64",
         "windows/arm64",

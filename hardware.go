@@ -3,6 +3,7 @@ package llm_toolkit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"time"
 
@@ -55,6 +56,7 @@ type ProcessMemoryUsage struct {
 	PID           int32   `json:"pid"`
 	Name          string  `json:"name,omitempty"`
 	CPUPercent    float64 `json:"cpu_percent"`
+	CPUPercentRaw float64 `json:"cpu_percent_raw"`
 	RSS           uint64  `json:"rss"`
 	VMS           uint64  `json:"vms"`
 	HWM           uint64  `json:"hwm,omitempty"`
@@ -147,7 +149,7 @@ func GetHardwareUsageInfoForPID(pid int32) (UsageInfo, error) {
 	}
 
 	if pid > 0 {
-		processInfo, err := getProcessUsage(pid)
+		processInfo, err := getProcessUsage(pid, logicalCores)
 		if err != nil {
 			return UsageInfo{}, err
 		}
@@ -157,7 +159,46 @@ func GetHardwareUsageInfoForPID(pid int32) (UsageInfo, error) {
 	return info, nil
 }
 
-func getProcessUsage(pid int32) (*ProcessMemoryUsage, error) {
+func MonitorHardwareUsage(ctx context.Context, interval time.Duration, onUsage func(UsageInfo) error) error {
+	return MonitorHardwareUsageForPID(ctx, int32(os.Getpid()), interval, onUsage)
+}
+
+func MonitorHardwareUsageForPID(ctx context.Context, pid int32, interval time.Duration, onUsage func(UsageInfo) error) error {
+	if interval <= 0 {
+		return fmt.Errorf("interval must be greater than 0")
+	}
+
+	emit := func() error {
+		usage, err := GetHardwareUsageInfoForPID(pid)
+		if err != nil {
+			return err
+		}
+		if onUsage != nil {
+			return onUsage(usage)
+		}
+		return nil
+	}
+
+	if err := emit(); err != nil {
+		return err
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if err := emit(); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func getProcessUsage(pid int32, logicalCores int) (*ProcessMemoryUsage, error) {
 	proc, err := process.NewProcess(pid)
 	if err != nil {
 		return nil, err
@@ -173,17 +214,23 @@ func getProcessUsage(pid int32) (*ProcessMemoryUsage, error) {
 		return nil, err
 	}
 
-	cpuPercent, err := proc.CPUPercent()
+	cpuPercentRaw, err := proc.Percent(200 * time.Millisecond)
 	if err != nil {
 		return nil, err
 	}
 
 	name, _ := proc.Name()
 
+	cpuPercent := cpuPercentRaw
+	if logicalCores > 0 {
+		cpuPercent = cpuPercentRaw / float64(logicalCores)
+	}
+
 	return &ProcessMemoryUsage{
 		PID:           pid,
 		Name:          name,
 		CPUPercent:    cpuPercent,
+		CPUPercentRaw: cpuPercentRaw,
 		RSS:           memInfo.RSS,
 		VMS:           memInfo.VMS,
 		HWM:           memInfo.HWM,
