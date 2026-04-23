@@ -7,7 +7,9 @@ import (
 )
 
 func main() {
-	if err := llm_toolkit.NewMcpServer("llm-toolkit", "0.1.0").ServeStdio(); err != nil {
+	srv := llm_toolkit.NewMcpServer("mermaid", "0.1.0")
+	srv.MustRegisterTool(llm_toolkit.NewMermaidMcpTool())
+	if err := srv.ServeStdio(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
